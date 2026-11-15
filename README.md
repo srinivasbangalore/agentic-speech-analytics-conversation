@@ -1,4 +1,8 @@
-# Signal Speech Analytics + Muse Glimmer (local, this laptop)
+# agentic-speech-analytics-conversation
+
+Agentic speech analytics and spoken language conversation.
+
+## Signal Speech Analytics + Muse Glimmer (local, this laptop)
 
 Signal is a local speech analytics site for microphone recordings and uploaded
 audio. A LangGraph supervisor routes each transcript through specialist

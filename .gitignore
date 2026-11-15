@@ -1,0 +1,11 @@
+# Large artifacts
+models/
+runtime/
+bin/
+*.gguf
+*.zip
+.venv/
+__pycache__/
+*.py[cod]
+server/.env
+.DS_Store

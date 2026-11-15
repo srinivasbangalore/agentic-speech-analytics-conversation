@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f5f5f0" />
+    <meta
+      name="description"
+      content="Transcribe, understand, and translate spoken audio with AI-powered speech analytics."
+    />
+    <title>Signal — Speech analytics</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script src="app.js" defer></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="Signal home">
+          <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+          <span>signal<span class="brand-period">.</span></span>
+        </a>
+        <nav class="top-nav" aria-label="Main navigation">
+          <a class="nav-link active" href="#workspace">Workspace</a>
+          <a class="nav-link" href="#how-it-works">How it works</a>
+        </nav>
+        <div class="topbar-right">
+          <span class="privacy-label"><span class="privacy-dot"></span> Local app</span>
+          <span class="avatar" aria-label="Local workspace">S</span>
+        </div>
+      </header>
+
+      <main id="workspace">
+        <section class="intro">
+          <div class="intro-copy">
+            <p class="eyebrow"><span class="eyebrow-line"></span> YOUR AUDIO, UNDERSTOOD</p>
+            <h1>Find the meaning<br />between the <em>words.</em></h1>
+            <p class="intro-description">
+              Turn a recording into a clear, thoughtful readout — from the words spoken to the feeling behind them.
+            </p>
+          </div>
+          <div class="intro-note">
+            <span class="note-icon" aria-hidden="true">✳</span>
+            <p>One recording.<br /><strong>A fuller picture.</strong></p>
+            <span class="note-caption">TRANSCRIBE · ANALYZE · TRANSLATE</span>
+          </div>
+        </section>
+
+        <div id="configuration-notice" class="notice notice-info" role="status" hidden></div>
+
+        <section class="workspace-grid" aria-label="Speech analysis workspace">
+          <aside class="input-panel panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">01 / INPUT</p>
+                <h2>Bring your audio</h2>
+              </div>
+              <span class="step-number">01</span>
+            </div>
+
+            <div id="drop-zone" class="drop-zone">
+              <input id="audio-file" class="visually-hidden" type="file" accept="audio/*,.wav,.mp3,.m4a,.ogg,.opus,.webm,.flac" />
+              <span class="upload-icon" aria-hidden="true">
+                <svg viewBox="0 0 32 32" fill="none">
+                  <path d="M16 21V5m0 0L9.5 11.5M16 5l6.5 6.5M6 20v5.5A1.5 1.5 0 0 0 7.5 27h17a1.5 1.5 0 0 0 1.5-1.5V20" />
+                </svg>
+              </span>
+              <p class="drop-title">Drop in a recording</p>
+              <p class="drop-copy">or <label for="audio-file" class="browse-link">browse files</label></p>
+              <span class="format-hint">WAV, MP3, M4A, OGG · UP TO 25 MB</span>
+            </div>
+
+            <div class="or-divider"><span></span><i>OR RECORD LIVE</i><span></span></div>
+            <button id="record-button" class="record-button" type="button">
+              <span class="record-indicator"></span>
+              <span>Stream from microphone</span>
+              <span class="record-time" id="record-time"></span>
+            </button>
+            <p id="record-hint" class="record-hint">Live English transcription, phrase translation, and text-emotion estimates. Allow microphone access to begin.</p>
+
+            <div id="audio-preview-wrap" class="audio-preview-wrap" hidden>
+              <div class="file-meta">
+                <span class="file-icon" aria-hidden="true">♪</span>
+                <div class="file-copy">
+                  <span id="file-name" class="file-name"></span>
+                  <span id="file-size" class="file-size"></span>
+                </div>
+                <button id="remove-audio" class="icon-button" type="button" aria-label="Remove audio">×</button>
+              </div>
+              <audio id="audio-preview" controls></audio>
+            </div>
+
+            <div class="input-divider"></div>
+            <div class="translate-select">
+              <label for="target-language">Translate transcript to</label>
+              <div class="select-wrap">
+                <span class="language-glyph" aria-hidden="true">文</span>
+                <select id="target-language">
+                  <option value="es" selected>Spanish</option>
+                  <option value="fr">French</option>
+                  <option value="de">German</option>
+                  <option value="it">Italian</option>
+                  <option value="pt">Portuguese</option>
+                  <option value="zh">Chinese</option>
+                  <option value="ja">Japanese</option>
+                  <option value="ko">Korean</option>
+                  <option value="hi">Hindi</option>
+                  <option value="ar">Arabic</option>
+                  <option value="ru">Russian</option>
+                  <option value="nl">Dutch</option>
+                  <option value="pl">Polish</option>
+                  <option value="sv">Swedish</option>
+                  <option value="fi">Finnish</option>
+                  <option value="tr">Turkish</option>
+                  <option value="uk">Ukrainian</option>
+                  <option value="vi">Vietnamese</option>
+                  <option value="th">Thai</option>
+                  <option value="id">Indonesian</option>
+                </select>
+                <span class="select-chevron" aria-hidden="true">⌄</span>
+              </div>
+            </div>
+
+            <button id="analyze-button" class="primary-button" type="button" disabled>
+              <span>Analyze recording</span><span class="button-arrow" aria-hidden="true">↗</span>
+            </button>
+            <p class="upload-disclaimer">Microphone transcription, translation, and text-emotion estimates update live by phrase. Uploaded audio gets full local analysis; neither path makes external inference calls.</p>
+          </aside>
+
+          <section class="results-column" aria-live="polite">
+            <section id="streaming-panel" class="streaming-panel panel" aria-labelledby="streaming-title" hidden>
+              <p class="eyebrow">LIVE · LOCAL STREAMING ASR</p>
+              <h2 id="streaming-title">Transcript as you speak</h2>
+              <p id="streaming-status" class="streaming-status" role="status">Connecting to the local streaming model…</p>
+              <p id="streaming-text" class="streaming-text"></p>
+              <div class="streaming-analysis-grid">
+                <section class="streaming-analysis-card" aria-labelledby="streaming-translation-title">
+                  <div class="streaming-analysis-heading">
+                    <h3 id="streaming-translation-title">Incremental translation</h3>
+                    <span id="streaming-translation-language" class="translation-language"></span>
+                  </div>
+                  <p id="streaming-translation-empty" class="streaming-analysis-empty">Translations appear as each phrase is recognized.</p>
+                  <div id="streaming-translations" class="streaming-segments" aria-live="polite"></div>
+                </section>
+                <section class="streaming-analysis-card" aria-labelledby="streaming-emotion-title">
+                  <div class="streaming-analysis-heading">
+                    <h3 id="streaming-emotion-title">Incremental text emotion</h3>
+                  </div>
+                  <p id="streaming-emotion-empty" class="streaming-analysis-empty">Emotion estimates appear as each phrase is recognized.</p>
+                  <div id="streaming-emotions" class="streaming-segments" aria-live="polite"></div>
+                </section>
+              </div>
+            </section>
+
+            <div id="empty-state" class="empty-state panel">
+              <div class="sound-art" aria-hidden="true">
+                <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+                <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+              </div>
+              <p class="eyebrow">YOUR LISTENING ROOM</p>
+              <h2>A little more than<br />just a transcript.</h2>
+              <p>Choose an audio file or record a clip. Your analysis will appear here, ready to explore.</p>
+              <div class="empty-capabilities">
+                <span>Speech &amp; emotion</span><i></i><span>Language &amp; translation</span><i></i><span>Meaning &amp; themes</span>
+              </div>
+            </div>
+
+            <div id="loading-state" class="loading-state panel" hidden>
+              <div class="loading-orb"><span></span><span></span><span></span></div>
+              <p class="eyebrow">LISTENING CLOSELY</p>
+              <h2 id="loading-title">Making sense of your audio</h2>
+              <p id="loading-description">Transcribing speech and reading the vocal cues…</p>
+              <div class="progress-track"><span></span></div>
+              <div class="pipeline-steps">
+                <span class="pipeline-step active">Transcribe</span>
+                <span class="pipeline-step">Specialists</span>
+                <span class="pipeline-step">Review</span>
+              </div>
+            </div>
+
+            <div id="results" class="results" hidden>
+              <div id="analysis-errors" class="notice notice-error" role="alert" hidden></div>
+              <div class="results-heading">
+                <div>
+                  <p class="eyebrow">02 / READOUT</p>
+                  <h2>Your audio, in focus</h2>
+                </div>
+                <button id="new-analysis" class="text-button" type="button">↻ New analysis</button>
+              </div>
+
+              <section class="agent-panel panel" aria-labelledby="agent-panel-title">
+                <div class="agent-panel-heading">
+                  <div>
+                    <p class="eyebrow">LANGGRAPH COORDINATION</p>
+                    <h3 id="agent-panel-title">Specialist agents</h3>
+                  </div>
+                  <span class="agent-coordination-label">Supervisor-led</span>
+                </div>
+                <ol id="agent-activity" class="agent-activity" aria-live="polite"></ol>
+                <p id="agent-review-notes" class="agent-review-notes" hidden></p>
+              </section>
+
+              <div class="metric-grid">
+                <article class="metric-card panel">
+                  <span class="metric-label">LENGTH</span>
+                  <strong id="metric-duration" class="metric-value">—</strong>
+                  <span class="metric-foot">recording</span>
+                </article>
+                <article class="metric-card panel">
+                  <span class="metric-label">SPEAKING PACE</span>
+                  <strong id="metric-pace" class="metric-value">—</strong>
+                  <span class="metric-foot">words per minute</span>
+                </article>
+                <article class="metric-card panel emotion-metric">
+                  <span class="metric-label">LEADING EMOTION</span>
+                  <strong id="metric-emotion" class="metric-value">—</strong>
+                  <span id="metric-emotion-confidence" class="metric-foot">vocal signal</span>
+                </article>
+                <article class="metric-card panel">
+                  <span class="metric-label">LANGUAGE</span>
+                  <strong id="metric-language" class="metric-value">—</strong>
+                  <span id="metric-language-confidence" class="metric-foot">detected</span>
+                </article>
+              </div>
+
+              <div class="content-grid">
+                <article class="content-card panel summary-card">
+                  <div class="card-heading">
+                    <div class="card-title-wrap"><span class="card-icon summary-icon">✳</span><div><p class="eyebrow">THE BIG PICTURE</p><h3>In a nutshell</h3></div></div>
+                    <span id="sentiment-pill" class="sentiment-pill" hidden></span>
+                  </div>
+                  <p id="summary-text" class="summary-text"></p>
+                  <div id="tone-row" class="tone-row" hidden><span>OVERALL TONE</span><strong id="tone-value"></strong></div>
+                </article>
+
+                <article class="content-card panel emotion-card">
+                  <div class="card-heading">
+                    <div class="card-title-wrap"><span class="card-icon emotion-icon">◒</span><div><p class="eyebrow">IN THE TRANSCRIPT</p><h3>Emotional read</h3></div></div>
+                  </div>
+                  <p class="card-description">Emotion cues inferred from the words in an English transcript</p>
+                  <div id="emotion-list" class="emotion-list"></div>
+                  <p id="emotion-error" class="inline-error" hidden></p>
+                </article>
+
+                <article class="content-card panel transcript-card">
+                  <div class="card-heading">
+                    <div class="card-title-wrap"><span class="card-icon transcript-icon">≋</span><div><p class="eyebrow">THE WORDS</p><h3>Transcript</h3></div></div>
+                    <button id="copy-transcript" class="copy-button" type="button">Copy</button>
+                  </div>
+                  <div class="transcript-meta"><span id="transcript-word-count">0 words</span><span class="meta-dot"></span><span id="transcript-language">Language detected</span></div>
+                  <p id="transcript-text" class="transcript-text"></p>
+                  <p id="transcript-error" class="inline-error" hidden></p>
+                </article>
+
+                <article class="content-card panel translation-card">
+                  <div class="card-heading">
+                    <div class="card-title-wrap"><span class="card-icon translation-icon">文</span><div><p class="eyebrow">ACROSS LANGUAGES</p><h3>Translation</h3></div></div>
+                    <span id="translation-language" class="translation-language"></span>
+                  </div>
+                  <p id="translation-text" class="translation-text"></p>
+                  <p id="translation-error" class="inline-error" hidden></p>
+                </article>
+
+                <article class="content-card panel themes-card">
+                  <div class="card-heading">
+                    <div class="card-title-wrap"><span class="card-icon themes-icon">⌘</span><div><p class="eyebrow">WHAT IT'S ABOUT</p><h3>Themes &amp; phrases</h3></div></div>
+                  </div>
+                  <div id="theme-list" class="tag-list"></div>
+                  <p id="themes-empty" class="muted-copy" hidden>No themes were returned for this recording.</p>
+                </article>
+
+                <article class="content-card panel action-card">
+                  <div class="card-heading">
+                    <div class="card-title-wrap"><span class="card-icon action-icon">↗</span><div><p class="eyebrow">TAKE IT FORWARD</p><h3>Next steps</h3></div></div>
+                  </div>
+                  <ul id="action-list" class="action-list"></ul>
+                  <p id="actions-empty" class="muted-copy" hidden>No specific action items were identified.</p>
+                </article>
+
+                <article class="content-card panel communication-card">
+                  <div class="card-heading">
+                    <div class="card-title-wrap"><span class="card-icon communication-icon">◎</span><div><p class="eyebrow">A CLOSER READ</p><h3>Communication notes</h3></div></div>
+                  </div>
+                  <ul id="communication-list" class="note-list"></ul>
+                  <p id="communication-empty" class="muted-copy" hidden>No additional communication notes were returned.</p>
+                </article>
+              </div>
+              <p class="results-footnote">AI-generated observations can be imperfect. Emotion labels are estimates from transcript wording, not vocal patterns, a diagnosis, or a statement of intent. Emotion classification is available for English transcripts.</p>
+            </div>
+          </section>
+        </section>
+
+        <section id="how-it-works" class="how-section">
+          <div><p class="eyebrow">BEHIND THE READOUT</p><h2>A team of specialists, coordinated locally.</h2></div>
+          <p>A LangGraph supervisor routes each transcript to specialist agents for emotion, insights, and translation. A review agent screens generated action items, then a metrics agent completes the readout. The steps stay local and report their status.</p>
+        </section>
+
+        <footer class="footer">
+          <a class="brand footer-brand" href="/"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><span>signal<span class="brand-period">.</span></span></a>
+          <span>Made for listening a little closer.</span>
+          <span class="footer-lock"><span class="privacy-dot"></span> Audio isn't stored by this app</span>
+        </footer>
+      </main>
+    </div>
+  </body>
+</html>

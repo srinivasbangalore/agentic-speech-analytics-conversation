@@ -17,6 +17,13 @@ capture. This streaming model is English-only, and emotion estimates are based
 on transcript wording rather than vocal prosody. Full summaries, themes, action
 items, and other LangGraph readouts remain part of uploaded-audio analysis.
 
+Optional spoken-conversation mode sends each recognized phrase to the local
+llama.cpp model with a bounded six-turn context and returns a short spoken
+reply. The browser speaks replies with a selected installed local English voice
+and pauses microphone capture during playback to prevent acoustic feedback.
+Conversation history is kept in memory only for the active WebSocket session;
+the browser's local voice service receives no network request.
+
 The results include an agent activity trace showing each specialist's
 assignment, completion status, and any skipped or warning steps. The emotion
 agent is conditionally skipped unless language detection identifies English
@@ -75,7 +82,9 @@ localhost. A live session is limited to 30 minutes of audio and closes after
 60 seconds without audio. Uploaded audio is limited to 25 MB and is processed
 locally. The emotion model is English-only and estimates emotion from transcript
 wording, not vocal tone. The app displays per-step errors instead of fabricating
-results when a local model is unavailable.
+results when a local model is unavailable. Spoken conversation requires an
+installed local English speech voice exposed by the browser; no separate TTS
+model download is needed.
 Run the defensive checks with:
 
 ```powershell

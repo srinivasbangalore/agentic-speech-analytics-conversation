@@ -18,6 +18,12 @@ const elements = {
   streamingTranslations: document.querySelector("#streaming-translations"),
   streamingEmotionEmpty: document.querySelector("#streaming-emotion-empty"),
   streamingEmotions: document.querySelector("#streaming-emotions"),
+  conversationMode: document.querySelector("#conversation-mode"),
+  ttsVoice: document.querySelector("#tts-voice"),
+  conversationHint: document.querySelector("#conversation-hint"),
+  streamingConversationPanel: document.querySelector("#streaming-conversation-panel"),
+  streamingConversationEmpty: document.querySelector("#streaming-conversation-empty"),
+  streamingConversationLog: document.querySelector("#streaming-conversation-log"),
   targetLanguage: document.querySelector("#target-language"),
   configurationNotice: document.querySelector("#configuration-notice"),
   emptyState: document.querySelector("#empty-state"),
@@ -49,6 +55,10 @@ let recordingStartedAt = 0;
 let audioDuration = null;
 let currentTranscript = "";
 let loadingTimer = null;
+let localTtsVoices = [];
+let assistantSpeechQueue = [];
+let assistantSpeechActive = false;
+let assistantSpeechGeneration = 0;
 
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, (character) => ({
@@ -226,6 +236,105 @@ function renderStreamingAnalysis(message) {
   }
 }
 
+function addConversationTurn(role, text) {
+  const turn = document.createElement("article");
+  turn.className = `streaming-turn ${role === "assistant" ? "assistant" : "user"}`;
+  const roleLabel = document.createElement("span");
+  roleLabel.className = "streaming-turn-role";
+  roleLabel.textContent = role === "assistant" ? "Assistant" : "You";
+  const bubble = document.createElement("p");
+  bubble.className = "streaming-turn-bubble";
+  bubble.textContent = text;
+  turn.append(roleLabel, bubble);
+  elements.streamingConversationLog.append(turn);
+  elements.streamingConversationEmpty.hidden = true;
+}
+
+function setMicrophoneMuted(muted) {
+  if (!microphoneStream) return;
+  microphoneStream.getAudioTracks().forEach((track) => {
+    track.enabled = !muted && streamingActive;
+  });
+}
+
+function speakNextAssistantReply(generation) {
+  if (generation !== assistantSpeechGeneration) return;
+  const text = assistantSpeechQueue.shift();
+  if (!text) {
+    assistantSpeechActive = false;
+    setMicrophoneMuted(false);
+    return;
+  }
+  const voice = localTtsVoices.find((candidate) => candidate.name === elements.ttsVoice.value) || localTtsVoices[0];
+  if (!voice) {
+    assistantSpeechActive = false;
+    setMicrophoneMuted(false);
+    elements.streamingStatus.textContent = "No local English voice is available for speech playback.";
+    return;
+  }
+
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.voice = voice;
+  utterance.lang = voice.lang;
+  utterance.onend = () => {
+    assistantSpeechActive = false;
+    speakNextAssistantReply(generation);
+  };
+  utterance.onerror = () => {
+    if (generation !== assistantSpeechGeneration) return;
+    assistantSpeechActive = false;
+    elements.streamingStatus.textContent = "The local voice could not play the assistant response.";
+    speakNextAssistantReply(generation);
+  };
+  assistantSpeechActive = true;
+  elements.streamingStatus.textContent = "Assistant speaking; microphone paused to prevent feedback.";
+  window.speechSynthesis.speak(utterance);
+}
+
+function speakAssistantReply(text) {
+  if (!text || !window.speechSynthesis || !window.SpeechSynthesisUtterance) return;
+  assistantSpeechQueue.push(text);
+  setMicrophoneMuted(true);
+  if (!assistantSpeechActive) speakNextAssistantReply(assistantSpeechGeneration);
+}
+
+function resetAssistantSpeech() {
+  assistantSpeechGeneration += 1;
+  window.speechSynthesis?.cancel();
+  assistantSpeechQueue = [];
+  assistantSpeechActive = false;
+  setMicrophoneMuted(false);
+}
+
+function refreshLocalTtsVoices() {
+  if (!window.speechSynthesis || !window.SpeechSynthesisUtterance) {
+    localTtsVoices = [];
+    elements.conversationMode.disabled = true;
+    elements.ttsVoice.disabled = true;
+    elements.conversationHint.textContent = "This browser does not support local speech playback.";
+    return;
+  }
+  const selectedVoice = elements.ttsVoice.value;
+  localTtsVoices = window.speechSynthesis.getVoices().filter(
+    (voice) => voice.localService && /^en([_-]|$)/i.test(voice.lang),
+  );
+  elements.ttsVoice.replaceChildren();
+  for (const voice of localTtsVoices) {
+    const option = document.createElement("option");
+    option.value = voice.name;
+    option.textContent = `${voice.name} (${voice.lang})`;
+    elements.ttsVoice.append(option);
+  }
+  const preferred = localTtsVoices.find((voice) => voice.name === selectedVoice) || localTtsVoices[0];
+  if (preferred) elements.ttsVoice.value = preferred.name;
+  const available = localTtsVoices.length > 0;
+  elements.conversationMode.disabled = !available || streamingActive;
+  elements.ttsVoice.disabled = !available || streamingActive;
+  elements.conversationHint.textContent = available
+    ? "Replies use this installed on-device English voice; the microphone pauses during playback."
+    : "No local English voice was found. Install an English voice in your system settings.";
+}
+
 function handleStreamingMessage(event) {
   let message;
   try {
@@ -242,7 +351,11 @@ function handleStreamingMessage(event) {
     streamingReadyReject = null;
   } else if (message.type === "configured") {
     elements.streamingTranslationLanguage.textContent = message.target_name || "";
-    elements.streamingStatus.textContent = "Listening locally. Translation and text emotion update after each recognized phrase.";
+    elements.conversationMode.checked = Boolean(message.conversation_mode);
+    elements.streamingConversationPanel.hidden = !message.conversation_mode;
+    elements.streamingStatus.textContent = message.conversation_mode
+      ? "Listening locally. Phrase analysis and spoken conversation are enabled."
+      : "Listening locally. Translation and text emotion update after each recognized phrase.";
     streamingConfigResolve?.();
     streamingConfigResolve = null;
     streamingConfigReject = null;
@@ -253,9 +366,19 @@ function handleStreamingMessage(event) {
       : "Transcribing live audio…";
   } else if (message.type === "analysis_status") {
     elements.streamingStatus.textContent = "Analyzing the latest phrase locally…";
+    if (elements.conversationMode.checked && message.source_text) {
+      addConversationTurn("user", message.source_text);
+    }
   } else if (message.type === "analysis") {
     renderStreamingAnalysis(message);
-    elements.streamingStatus.textContent = "Live transcription and phrase analysis are up to date.";
+    if (message.conversation_error) {
+      addConversationTurn("assistant", `Conversation unavailable: ${message.conversation_error}`);
+    } else if (message.assistant_response) {
+      addConversationTurn("assistant", message.assistant_response);
+      speakAssistantReply(message.assistant_response);
+    } else {
+      elements.streamingStatus.textContent = "Live transcription and phrase analysis are up to date.";
+    }
   } else if (message.type === "final") {
     elements.streamingText.textContent = message.text || "";
     elements.streamingStatus.textContent = message.text
@@ -263,6 +386,8 @@ function handleStreamingMessage(event) {
       : "No speech was recognized.";
     streamingActive = false;
     elements.targetLanguage.disabled = false;
+    elements.conversationMode.disabled = localTtsVoices.length === 0;
+    elements.ttsVoice.disabled = localTtsVoices.length === 0;
     setRecordingUi(false);
     stopAudioCapture();
     streamingSocket?.close();
@@ -278,6 +403,9 @@ function handleStreamingMessage(event) {
     streamingActive = false;
     elements.recordButton.disabled = false;
     elements.targetLanguage.disabled = false;
+    elements.conversationMode.disabled = localTtsVoices.length === 0;
+    elements.ttsVoice.disabled = localTtsVoices.length === 0;
+    resetAssistantSpeech();
     setRecordingUi(false);
     stopAudioCapture();
     streamingSocket?.close();
@@ -296,9 +424,13 @@ async function startStreamingRecording() {
     elements.recordHint.textContent = "Live microphone transcription is not supported in this browser. Upload an audio file instead.";
     return;
   }
+  resetAssistantSpeech();
   elements.recordButton.disabled = true;
   elements.targetLanguage.disabled = true;
+  elements.conversationMode.disabled = true;
+  elements.ttsVoice.disabled = true;
   elements.streamingPanel.hidden = false;
+  elements.streamingConversationPanel.hidden = !elements.conversationMode.checked;
   elements.emptyState.hidden = true;
   elements.results.hidden = true;
   elements.loadingState.hidden = true;
@@ -306,8 +438,10 @@ async function startStreamingRecording() {
   elements.streamingTranslationLanguage.textContent = elements.targetLanguage.selectedOptions[0]?.textContent || "";
   elements.streamingTranslations.replaceChildren();
   elements.streamingEmotions.replaceChildren();
+  elements.streamingConversationLog.replaceChildren();
   elements.streamingTranslationEmpty.hidden = false;
   elements.streamingEmotionEmpty.hidden = false;
+  elements.streamingConversationEmpty.hidden = false;
   elements.streamingStatus.textContent = "Waiting for microphone permission…";
   streamingActive = true;
 
@@ -339,6 +473,9 @@ async function startStreamingRecording() {
       streamingActive = false;
       elements.recordButton.disabled = false;
       elements.targetLanguage.disabled = false;
+      elements.conversationMode.disabled = localTtsVoices.length === 0;
+      elements.ttsVoice.disabled = localTtsVoices.length === 0;
+      resetAssistantSpeech();
       setRecordingUi(false);
       stopAudioCapture();
       elements.streamingStatus.textContent = "The local streaming connection closed unexpectedly.";
@@ -356,6 +493,7 @@ async function startStreamingRecording() {
     streamingSocket.send(JSON.stringify({
       type: "configure",
       target_language: elements.targetLanguage.value,
+      conversation_mode: elements.conversationMode.checked,
     }));
     await configurationPromise;
 
@@ -379,7 +517,9 @@ async function startStreamingRecording() {
 
     elements.recordButton.disabled = false;
     setRecordingUi(true);
-    elements.recordHint.textContent = "Streaming English speech; translation and text-emotion estimates update by phrase.";
+    elements.recordHint.textContent = elements.conversationMode.checked
+      ? "Speak a phrase, then pause for the assistant to answer. The microphone pauses while it speaks."
+      : "Streaming English speech; translation and text-emotion estimates update by phrase.";
     recordingStartedAt = Date.now();
     elements.recordTimer = window.setInterval(() => {
       elements.recordTime.textContent = formatDuration((Date.now() - recordingStartedAt) / 1000);
@@ -388,10 +528,13 @@ async function startStreamingRecording() {
     streamingActive = false;
     elements.recordButton.disabled = false;
     elements.targetLanguage.disabled = false;
+    elements.conversationMode.disabled = localTtsVoices.length === 0;
+    elements.ttsVoice.disabled = localTtsVoices.length === 0;
     streamingReadyResolve = null;
     streamingReadyReject = null;
     streamingConfigResolve = null;
     streamingConfigReject = null;
+    resetAssistantSpeech();
     setRecordingUi(false);
     stopAudioCapture();
     if (streamingSocket && streamingSocket.readyState < WebSocket.CLOSING) streamingSocket.close();
@@ -590,6 +733,9 @@ elements.recordButton.addEventListener("click", toggleRecording);
 elements.removeAudio.addEventListener("click", clearSelectedFile);
 elements.analyzeButton.addEventListener("click", analyzeAudio);
 elements.newAnalysis.addEventListener("click", clearSelectedFile);
+elements.conversationMode.addEventListener("change", () => {
+  elements.streamingConversationPanel.hidden = !elements.conversationMode.checked;
+});
 document.querySelector("#copy-transcript").addEventListener("click", async (event) => {
   if (!currentTranscript) return;
   try {
@@ -600,6 +746,9 @@ document.querySelector("#copy-transcript").addEventListener("click", async (even
     event.currentTarget.textContent = "Copy unavailable";
   }
 });
+
+refreshLocalTtsVoices();
+window.speechSynthesis?.addEventListener("voiceschanged", refreshLocalTtsVoices);
 
 fetch("/api/health")
   .then((response) => response.json())

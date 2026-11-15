@@ -239,6 +239,7 @@ def test_streaming_websocket_sends_partial_and_final_transcript(client, monkeypa
         assert websocket.receive_json() == {
             "type": "analysis_status",
             "segment_id": 0,
+            "source_text": "hello world",
             "status": "processing",
         }
         assert websocket.receive_json() == {
@@ -250,6 +251,8 @@ def test_streaming_websocket_sends_partial_and_final_transcript(client, monkeypa
             "translation_error": None,
             "emotions": [{"label": "neutral", "score": 0.9}],
             "emotion_error": None,
+            "assistant_response": None,
+            "conversation_error": None,
         }
         assert websocket.receive_json() == {"type": "final", "text": "hello world"}
 
@@ -293,6 +296,7 @@ def test_streaming_websocket_analyzes_each_completed_utterance_incrementally(cli
             "type": "configured",
             "target_language": "fr",
             "target_name": "French",
+            "conversation_mode": False,
         }
         websocket.send_bytes(struct.pack("<f", 0.25))
         assert websocket.receive_json() == {
@@ -307,11 +311,99 @@ def test_streaming_websocket_analyzes_each_completed_utterance_incrementally(cli
         assert result["translation"] == "bonjour le monde"
         assert result["emotions"] == [{"label": "joy", "score": 0.8}]
         assert result["target_language"] == "fr"
+        assert result["assistant_response"] is None
         websocket.send_json({"type": "end"})
         assert websocket.receive_json() == {"type": "final", "text": "hello world"}
 
     assert translations == [("hello world", "English", "French")]
     assert len(loaded_classifiers) == 1
+
+
+def test_conversation_reply_keeps_bounded_turn_context(monkeypatch):
+    seen_messages = []
+
+    async def fake_local_chat(messages, max_tokens):
+        seen_messages.append((messages, max_tokens))
+        return "I can help with that.", "stop"
+
+    monkeypatch.setattr(speech_app, "_local_chat", fake_local_chat)
+    history = [
+        {"role": role, "content": f"turn {index}"}
+        for index in range(14)
+        for role in ("user", "assistant")
+    ]
+
+    response = asyncio.run(speech_app._conversation_reply_local("What time is it?", history))
+
+    assert response == "I can help with that."
+    assert seen_messages[0][1] == 180
+    assert seen_messages[0][0][-1] == {"role": "user", "content": "What time is it?"}
+    assert len(history) == 12
+    assert history[-2:] == [
+        {"role": "user", "content": "What time is it?"},
+        {"role": "assistant", "content": response},
+    ]
+
+
+def test_streaming_websocket_generates_conversation_replies(client, monkeypatch):
+    class FakeRecognizer:
+        def create_stream(self):
+            return object()
+
+    replies = []
+
+    async def fake_translate(_transcript, _source, _target):
+        return "Hola."
+
+    async def fake_conversation_reply(transcript, history):
+        replies.append(transcript)
+        history.extend(
+            [
+                {"role": "user", "content": transcript},
+                {"role": "assistant", "content": "Hello there."},
+            ]
+        )
+        return "Hello there."
+
+    monkeypatch.setattr(speech_app, "_streaming_asr_ready", lambda: True)
+    monkeypatch.setattr(speech_app, "_create_streaming_recognizer", FakeRecognizer)
+    monkeypatch.setattr(speech_app, "_translate_local", fake_translate)
+    monkeypatch.setattr(speech_app, "_load_emotion_classifier", lambda: ("tokenizer", "model"))
+    monkeypatch.setattr(
+        speech_app,
+        "_classify_emotions_with_classifier",
+        lambda _text, _classifier: [{"label": "joy", "score": 0.8}],
+    )
+    monkeypatch.setattr(speech_app, "_conversation_reply_local", fake_conversation_reply)
+    monkeypatch.setattr(
+        speech_app,
+        "_decode_stream_chunk",
+        lambda _recognizer, _stream, _audio: ("Hello assistant.", True),
+    )
+    monkeypatch.setattr(speech_app, "_finish_stream", lambda _recognizer, _stream: "")
+
+    with client.websocket_connect("/ws/transcribe") as websocket:
+        assert websocket.receive_json()["type"] == "ready"
+        websocket.send_json(
+            {"type": "configure", "target_language": "es", "conversation_mode": True}
+        )
+        assert websocket.receive_json() == {
+            "type": "configured",
+            "target_language": "es",
+            "target_name": "Spanish",
+            "conversation_mode": True,
+        }
+        websocket.send_bytes(struct.pack("<f", 0.25))
+        assert websocket.receive_json()["type"] == "partial"
+        assert websocket.receive_json()["type"] == "analysis_status"
+        result = websocket.receive_json()
+        assert result["type"] == "analysis"
+        assert result["assistant_response"] == "Hello there."
+        assert result["conversation_error"] is None
+        websocket.send_json({"type": "end"})
+        assert websocket.receive_json() == {"type": "final", "text": "Hello assistant."}
+
+    assert replies == ["Hello assistant."]
 
 
 def test_streaming_websocket_rejects_unsupported_translation_target(client, monkeypatch):

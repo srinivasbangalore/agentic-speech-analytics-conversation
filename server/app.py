@@ -310,6 +310,37 @@ async def _translate_local(
     return translated
 
 
+async def _conversation_reply_local(
+    transcript: str,
+    history: list[dict[str, str]],
+) -> str:
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are Signal, a concise voice conversation partner. Reply in natural spoken English using one to three "
+                "short sentences. Do not use markdown, lists, or emoji. You have no tools and can only use this conversation. "
+                "Never claim to have performed actions outside this chat."
+            ),
+        },
+        *history,
+        {"role": "user", "content": transcript},
+    ]
+    response, finish_reason = await _local_chat(messages, max_tokens=180)
+    if finish_reason == "length":
+        raise ValueError("The local conversation response was truncated.")
+    if not response:
+        raise ValueError("The local model returned no conversation response.")
+    history.extend(
+        [
+            {"role": "user", "content": transcript},
+            {"role": "assistant", "content": response},
+        ]
+    )
+    del history[:-12]
+    return response
+
+
 def build_analysis_graph():
     async def transcription_agent(state: AnalysisState) -> dict[str, Any]:
         try:
@@ -746,6 +777,8 @@ async def stream_transcription(websocket: WebSocket) -> None:
 
             analysis_queue: asyncio.Queue[tuple[int, str] | None] = asyncio.Queue(maxsize=4)
             target_language = "es"
+            conversation_mode = False
+            conversation_history: list[dict[str, str]] = []
             emotion_classifier: tuple[Any, Any] | None = None
             emotion_load_error: str | None = None
 
@@ -777,6 +810,14 @@ async def stream_transcription(websocket: WebSocket) -> None:
                     return [], "The local emotion model returned no result."
                 return emotions, None
 
+            async def answer_segment(text: str) -> tuple[str | None, str | None]:
+                if not conversation_mode:
+                    return None, None
+                try:
+                    return await _conversation_reply_local(text, conversation_history), None
+                except (httpx.HTTPError, TimeoutError, ValueError) as exc:
+                    return None, _service_error(exc)
+
             async def analyze_segments() -> None:
                 nonlocal emotion_classifier
                 try:
@@ -792,6 +833,7 @@ async def stream_transcription(websocket: WebSocket) -> None:
                             )
                             translated, translation_error = translation_result
                             emotions, emotion_error = emotion_result
+                            assistant_response, conversation_error = await answer_segment(text)
                             await send_json(
                                 {
                                     "type": "analysis",
@@ -802,6 +844,8 @@ async def stream_transcription(websocket: WebSocket) -> None:
                                     "translation_error": translation_error,
                                     "emotions": emotions,
                                     "emotion_error": emotion_error,
+                                    "assistant_response": assistant_response,
+                                    "conversation_error": conversation_error,
                                 }
                             )
                         finally:
@@ -880,7 +924,12 @@ async def stream_transcription(websocket: WebSocket) -> None:
                         )
                         if endpoint and text:
                             await send_json(
-                                {"type": "analysis_status", "segment_id": segment_id, "status": "processing"}
+                                {
+                                    "type": "analysis_status",
+                                    "segment_id": segment_id,
+                                    "source_text": text,
+                                    "status": "processing",
+                                }
                             )
                             await analysis_queue.put((segment_id, text))
                             segment_id += 1
@@ -898,18 +947,30 @@ async def stream_transcription(websocket: WebSocket) -> None:
                         continue
                     if command.get("type") == "configure":
                         requested_language = command.get("target_language")
+                        requested_conversation_mode = command.get("conversation_mode", False)
                         if received_bytes or not isinstance(requested_language, str) or requested_language not in LANGUAGE_NAMES:
                             await send_json(
-                                {"type": "error", "message": "Choose a supported translation language before streaming audio."}
+                                {
+                                    "type": "error",
+                                    "message": "Choose a supported translation language before streaming audio.",
+                                }
+                            )
+                            await websocket.close(code=1008)
+                            break
+                        if not isinstance(requested_conversation_mode, bool):
+                            await send_json(
+                                {"type": "error", "message": "Conversation mode must be a boolean."}
                             )
                             await websocket.close(code=1008)
                             break
                         target_language = requested_language
+                        conversation_mode = requested_conversation_mode
                         await send_json(
                             {
                                 "type": "configured",
                                 "target_language": target_language,
                                 "target_name": LANGUAGE_NAMES[target_language],
+                                "conversation_mode": conversation_mode,
                             }
                         )
                         continue
@@ -920,7 +981,12 @@ async def stream_transcription(websocket: WebSocket) -> None:
                     if final_text:
                         committed.append(final_text)
                         await send_json(
-                            {"type": "analysis_status", "segment_id": segment_id, "status": "processing"}
+                            {
+                                "type": "analysis_status",
+                                "segment_id": segment_id,
+                                "source_text": final_text,
+                                "status": "processing",
+                            }
                         )
                         await analysis_queue.put((segment_id, final_text))
                     await analysis_queue.put(None)

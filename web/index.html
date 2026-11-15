@@ -120,6 +120,16 @@
               </div>
             </div>
 
+            <div class="conversation-controls">
+              <label class="conversation-toggle" for="conversation-mode">
+                <input id="conversation-mode" type="checkbox" />
+                <span>Spoken conversation</span>
+              </label>
+              <label class="conversation-voice-label" for="tts-voice">Local speaking voice</label>
+              <select id="tts-voice" class="conversation-voice"></select>
+              <p id="conversation-hint" class="conversation-hint">Assistant replies use an installed on-device English voice.</p>
+            </div>
+
             <button id="analyze-button" class="primary-button" type="button" disabled>
               <span>Analyze recording</span><span class="button-arrow" aria-hidden="true">↗</span>
             </button>
@@ -149,6 +159,14 @@
                   <div id="streaming-emotions" class="streaming-segments" aria-live="polite"></div>
                 </section>
               </div>
+              <section id="streaming-conversation-panel" class="streaming-conversation" aria-labelledby="streaming-conversation-title" hidden>
+                <div class="streaming-analysis-heading">
+                  <h3 id="streaming-conversation-title">Conversation</h3>
+                  <span class="local-voice-label">LOCAL VOICE</span>
+                </div>
+                <p id="streaming-conversation-empty" class="streaming-analysis-empty">Speak a phrase to start the conversation.</p>
+                <div id="streaming-conversation-log" class="streaming-conversation-log" aria-live="polite"></div>
+              </section>
             </section>
 
             <div id="empty-state" class="empty-state panel">

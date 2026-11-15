@@ -9,6 +9,7 @@ from huggingface_hub import hf_hub_download, snapshot_download
 
 ROOT = Path(__file__).resolve().parent.parent
 MODEL_ROOT = ROOT / "models" / "speech-analytics"
+QWEN_TTS_MODEL = "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
 
 MODELS = (
     (
@@ -61,6 +62,13 @@ def main() -> None:
         repo_id="Qwen/Qwen2.5-0.5B-Instruct-GGUF",
         filename="qwen2.5-0.5b-instruct-q4_k_m.gguf",
         local_dir=str(qwen_dir),
+        token=False,
+    )
+    tts_dir = MODEL_ROOT / "qwen3-tts-0.6b-customvoice"
+    print(f"Downloading local Qwen TTS model: {QWEN_TTS_MODEL} -> {tts_dir}")
+    snapshot_download(
+        repo_id=QWEN_TTS_MODEL,
+        local_dir=str(tts_dir),
         token=False,
     )
     print("Model downloads complete. Runtime inference is configured for offline/local-only use.")

@@ -345,6 +345,45 @@ def test_conversation_reply_keeps_bounded_turn_context(monkeypatch):
     ]
 
 
+def test_qwen_tts_endpoint_returns_local_audio(client, monkeypatch):
+    calls = []
+
+    def fake_synthesize(text, speaker):
+        calls.append((text, speaker))
+        return b"RIFF-local-wav"
+
+    monkeypatch.setattr(speech_app, "_qwen_tts_ready", lambda: True)
+    monkeypatch.setattr(speech_app, "_synthesize_speech_local", fake_synthesize)
+
+    response = client.post(
+        "/api/tts",
+        json={"text": "Hello there.", "speaker": "Ryan"},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "audio/wav"
+    assert response.content == b"RIFF-local-wav"
+    assert calls == [("Hello there.", "Ryan")]
+
+
+def test_qwen_tts_endpoint_reports_missing_local_model(client, monkeypatch):
+    monkeypatch.setattr(speech_app, "_qwen_tts_ready", lambda: False)
+
+    response = client.post("/api/tts", json={"text": "Hello there."})
+
+    assert response.status_code == 503
+    assert "local Qwen TTS model is missing" in response.json()["detail"]
+
+
+def test_qwen_tts_endpoint_rejects_unsupported_speaker(client):
+    response = client.post(
+        "/api/tts",
+        json={"text": "Hello there.", "speaker": "Not a Qwen speaker"},
+    )
+
+    assert response.status_code == 422
+
+
 def test_streaming_websocket_generates_conversation_replies(client, monkeypatch):
     class FakeRecognizer:
         def create_stream(self):

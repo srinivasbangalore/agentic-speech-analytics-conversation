@@ -7,6 +7,7 @@ av==19.0.2
 python-dotenv>=1
 python-multipart>=0.0.20
 sherpa-onnx==2.0.1
-transformers>=4.44,<5
+transformers==4.57.3
 torch>=2.5
+qwen-tts==0.1.1
 uvicorn[standard]>=0.34

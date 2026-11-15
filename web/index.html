@@ -122,12 +122,15 @@
 
             <div class="conversation-controls">
               <label class="conversation-toggle" for="conversation-mode">
-                <input id="conversation-mode" type="checkbox" />
+                <input id="conversation-mode" type="checkbox" disabled />
                 <span>Spoken conversation</span>
               </label>
-              <label class="conversation-voice-label" for="tts-voice">Local speaking voice</label>
-              <select id="tts-voice" class="conversation-voice"></select>
-              <p id="conversation-hint" class="conversation-hint">Assistant replies use an installed on-device English voice.</p>
+              <label class="conversation-voice-label" for="tts-voice">Qwen TTS voice</label>
+              <select id="tts-voice" class="conversation-voice" disabled>
+                <option value="Aiden">Aiden — American English</option>
+                <option value="Ryan">Ryan — English</option>
+              </select>
+              <p id="conversation-hint" class="conversation-hint">Checking for the local Qwen TTS model…</p>
             </div>
 
             <button id="analyze-button" class="primary-button" type="button" disabled>

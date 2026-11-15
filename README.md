@@ -23,10 +23,15 @@ items, and other LangGraph readouts remain part of uploaded-audio analysis.
 
 Optional spoken-conversation mode sends each recognized phrase to the local
 llama.cpp model with a bounded six-turn context and returns a short spoken
-reply. The browser speaks replies with a selected installed local English voice
-and pauses microphone capture during playback to prevent acoustic feedback.
-Conversation history is kept in memory only for the active WebSocket session;
-the browser's local voice service receives no network request.
+reply. Qwen3-TTS 0.6B synthesizes each reply locally using the selected Aiden or
+Ryan voice; the browser only plays audio returned by the local app. Microphone
+capture pauses during playback to prevent acoustic feedback. Conversation
+history is kept in memory only for the active WebSocket session, and generated
+audio is not stored. The CPU implementation synthesizes a complete WAV before
+playback; on this machine the first short test took about 22 seconds including
+model load, and a warm 3.7-second sample took about 11 seconds to generate.
+Synthesis is slower than real time, so the microphone stays paused during
+generation and playback.
 
 The results include an agent activity trace showing each specialist's
 assignment, completion status, and any skipped or warning steps. The emotion
@@ -61,8 +66,10 @@ recordings. Model license terms are in the model cards.
    ```
 
    This downloads Faster-Whisper small, the English emotion classifier,
-   streaming Zipformer, and a small Qwen GGUF used for local smoke tests into
-   the ignored `models\` directory. Runtime inference never downloads weights.
+   streaming Zipformer, Qwen3-TTS 0.6B CustomVoice, and a small Qwen GGUF used
+   for local smoke tests into the ignored `models\` directory. Runtime
+   inference never downloads weights. Qwen TTS runs on CPU using bfloat16 and
+   can take longer to synthesize than browser-native speech.
 3. Start the local language model server in one terminal:
 
    ```powershell
@@ -86,9 +93,8 @@ localhost. A live session is limited to 30 minutes of audio and closes after
 60 seconds without audio. Uploaded audio is limited to 25 MB and is processed
 locally. The emotion model is English-only and estimates emotion from transcript
 wording, not vocal tone. The app displays per-step errors instead of fabricating
-results when a local model is unavailable. Spoken conversation requires an
-installed local English speech voice exposed by the browser; no separate TTS
-model download is needed.
+results when a local model is unavailable. Spoken conversation requires the
+downloaded local Qwen TTS model; it does not depend on browser-installed voices.
 Run the defensive checks with:
 
 ```powershell

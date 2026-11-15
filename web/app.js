@@ -55,10 +55,13 @@ let recordingStartedAt = 0;
 let audioDuration = null;
 let currentTranscript = "";
 let loadingTimer = null;
-let localTtsVoices = [];
+let qwenTtsReady = false;
 let assistantSpeechQueue = [];
 let assistantSpeechActive = false;
 let assistantSpeechGeneration = 0;
+let assistantSpeechController = null;
+let assistantAudio = null;
+let assistantAudioUrl = null;
 
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, (character) => ({
@@ -257,82 +260,95 @@ function setMicrophoneMuted(muted) {
   });
 }
 
-function speakNextAssistantReply(generation) {
+async function speakNextAssistantReply(generation) {
   if (generation !== assistantSpeechGeneration) return;
-  const text = assistantSpeechQueue.shift();
-  if (!text) {
+  const reply = assistantSpeechQueue.shift();
+  if (!reply) {
     assistantSpeechActive = false;
     setMicrophoneMuted(false);
     return;
   }
-  const voice = localTtsVoices.find((candidate) => candidate.name === elements.ttsVoice.value) || localTtsVoices[0];
-  if (!voice) {
-    assistantSpeechActive = false;
-    setMicrophoneMuted(false);
-    elements.streamingStatus.textContent = "No local English voice is available for speech playback.";
-    return;
-  }
-
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.voice = voice;
-  utterance.lang = voice.lang;
-  utterance.onend = () => {
-    assistantSpeechActive = false;
-    speakNextAssistantReply(generation);
-  };
-  utterance.onerror = () => {
-    if (generation !== assistantSpeechGeneration) return;
-    assistantSpeechActive = false;
-    elements.streamingStatus.textContent = "The local voice could not play the assistant response.";
-    speakNextAssistantReply(generation);
-  };
   assistantSpeechActive = true;
-  elements.streamingStatus.textContent = "Assistant speaking; microphone paused to prevent feedback.";
-  window.speechSynthesis.speak(utterance);
+  const controller = new AbortController();
+  assistantSpeechController = controller;
+
+  try {
+    elements.streamingStatus.textContent = "Generating speech locally with Qwen TTS…";
+    const response = await fetch("/api/tts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(reply),
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      let errorMessage = `Local Qwen TTS request failed (${response.status}).`;
+      try {
+        const payload = await response.json();
+        if (typeof payload.detail === "string") errorMessage = payload.detail;
+      } catch {
+        // Keep the HTTP status message when the server does not return JSON.
+      }
+      throw new Error(errorMessage);
+    }
+
+    const audioBlob = await response.blob();
+    if (generation !== assistantSpeechGeneration) return;
+    assistantAudioUrl = URL.createObjectURL(audioBlob);
+    assistantAudio = new Audio(assistantAudioUrl);
+    elements.streamingStatus.textContent = "Assistant speaking; microphone paused to prevent feedback.";
+    await new Promise((resolve, reject) => {
+      assistantAudio.addEventListener("ended", resolve, { once: true });
+      assistantAudio.addEventListener(
+        "error",
+        () => reject(new Error("The generated Qwen audio could not be played.")),
+        { once: true },
+      );
+      controller.signal.addEventListener("abort", resolve, { once: true });
+      assistantAudio.play().catch(reject);
+    });
+  } catch (error) {
+    if (generation !== assistantSpeechGeneration || error.name === "AbortError") return;
+    elements.streamingStatus.textContent = `Local Qwen TTS failed: ${error.message || "unknown error"}`;
+  } finally {
+    if (assistantSpeechController === controller) assistantSpeechController = null;
+    if (generation !== assistantSpeechGeneration) return;
+    assistantAudio?.pause();
+    assistantAudio = null;
+    if (assistantAudioUrl) URL.revokeObjectURL(assistantAudioUrl);
+    assistantAudioUrl = null;
+    assistantSpeechActive = false;
+    if (assistantSpeechQueue.length) void speakNextAssistantReply(generation);
+    else setMicrophoneMuted(false);
+  }
 }
 
 function speakAssistantReply(text) {
-  if (!text || !window.speechSynthesis || !window.SpeechSynthesisUtterance) return;
-  assistantSpeechQueue.push(text);
+  if (!text || !qwenTtsReady) return;
+  assistantSpeechQueue.push({ text, speaker: elements.ttsVoice.value });
   setMicrophoneMuted(true);
-  if (!assistantSpeechActive) speakNextAssistantReply(assistantSpeechGeneration);
+  if (!assistantSpeechActive) void speakNextAssistantReply(assistantSpeechGeneration);
 }
 
 function resetAssistantSpeech() {
   assistantSpeechGeneration += 1;
-  window.speechSynthesis?.cancel();
+  assistantSpeechController?.abort();
+  assistantSpeechController = null;
+  assistantAudio?.pause();
+  assistantAudio = null;
+  if (assistantAudioUrl) URL.revokeObjectURL(assistantAudioUrl);
+  assistantAudioUrl = null;
   assistantSpeechQueue = [];
   assistantSpeechActive = false;
   setMicrophoneMuted(false);
 }
 
-function refreshLocalTtsVoices() {
-  if (!window.speechSynthesis || !window.SpeechSynthesisUtterance) {
-    localTtsVoices = [];
-    elements.conversationMode.disabled = true;
-    elements.ttsVoice.disabled = true;
-    elements.conversationHint.textContent = "This browser does not support local speech playback.";
-    return;
-  }
-  const selectedVoice = elements.ttsVoice.value;
-  localTtsVoices = window.speechSynthesis.getVoices().filter(
-    (voice) => voice.localService && /^en([_-]|$)/i.test(voice.lang),
-  );
-  elements.ttsVoice.replaceChildren();
-  for (const voice of localTtsVoices) {
-    const option = document.createElement("option");
-    option.value = voice.name;
-    option.textContent = `${voice.name} (${voice.lang})`;
-    elements.ttsVoice.append(option);
-  }
-  const preferred = localTtsVoices.find((voice) => voice.name === selectedVoice) || localTtsVoices[0];
-  if (preferred) elements.ttsVoice.value = preferred.name;
-  const available = localTtsVoices.length > 0;
+function setQwenTtsAvailability(available) {
+  qwenTtsReady = available;
   elements.conversationMode.disabled = !available || streamingActive;
   elements.ttsVoice.disabled = !available || streamingActive;
   elements.conversationHint.textContent = available
-    ? "Replies use this installed on-device English voice; the microphone pauses during playback."
-    : "No local English voice was found. Install an English voice in your system settings.";
+    ? "Replies are synthesized locally with Qwen TTS; the microphone pauses during playback."
+    : "The local Qwen TTS model is missing. Run .venv\\Scripts\\python.exe server\\download_models.py to download it.";
 }
 
 function handleStreamingMessage(event) {
@@ -386,8 +402,8 @@ function handleStreamingMessage(event) {
       : "No speech was recognized.";
     streamingActive = false;
     elements.targetLanguage.disabled = false;
-    elements.conversationMode.disabled = localTtsVoices.length === 0;
-    elements.ttsVoice.disabled = localTtsVoices.length === 0;
+    elements.conversationMode.disabled = !qwenTtsReady;
+    elements.ttsVoice.disabled = !qwenTtsReady;
     setRecordingUi(false);
     stopAudioCapture();
     streamingSocket?.close();
@@ -403,8 +419,8 @@ function handleStreamingMessage(event) {
     streamingActive = false;
     elements.recordButton.disabled = false;
     elements.targetLanguage.disabled = false;
-    elements.conversationMode.disabled = localTtsVoices.length === 0;
-    elements.ttsVoice.disabled = localTtsVoices.length === 0;
+    elements.conversationMode.disabled = !qwenTtsReady;
+    elements.ttsVoice.disabled = !qwenTtsReady;
     resetAssistantSpeech();
     setRecordingUi(false);
     stopAudioCapture();
@@ -473,8 +489,8 @@ async function startStreamingRecording() {
       streamingActive = false;
       elements.recordButton.disabled = false;
       elements.targetLanguage.disabled = false;
-      elements.conversationMode.disabled = localTtsVoices.length === 0;
-      elements.ttsVoice.disabled = localTtsVoices.length === 0;
+      elements.conversationMode.disabled = !qwenTtsReady;
+      elements.ttsVoice.disabled = !qwenTtsReady;
       resetAssistantSpeech();
       setRecordingUi(false);
       stopAudioCapture();
@@ -528,8 +544,8 @@ async function startStreamingRecording() {
     streamingActive = false;
     elements.recordButton.disabled = false;
     elements.targetLanguage.disabled = false;
-    elements.conversationMode.disabled = localTtsVoices.length === 0;
-    elements.ttsVoice.disabled = localTtsVoices.length === 0;
+    elements.conversationMode.disabled = !qwenTtsReady;
+    elements.ttsVoice.disabled = !qwenTtsReady;
     streamingReadyResolve = null;
     streamingReadyReject = null;
     streamingConfigResolve = null;
@@ -747,13 +763,11 @@ document.querySelector("#copy-transcript").addEventListener("click", async (even
   }
 });
 
-refreshLocalTtsVoices();
-window.speechSynthesis?.addEventListener("voiceschanged", refreshLocalTtsVoices);
-
 fetch("/api/health")
   .then((response) => response.json())
   .then((health) => {
     elements.recordButton.disabled = !health.streaming_asr_ready;
+    setQwenTtsAvailability(Boolean(health.qwen_tts_ready));
     if (!health.streaming_asr_ready) {
       showNotice("The local streaming ASR model is missing. Run .venv\\Scripts\\python.exe server\\download_models.py to download it once.");
     } else if (!health.local_models_ready) {

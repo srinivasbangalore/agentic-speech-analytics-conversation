@@ -6,16 +6,18 @@ import math
 import os
 import operator
 import re
+import threading
 from pathlib import Path
-from typing import Annotated, Any, TypedDict
+from typing import Annotated, Any, Literal, TypedDict
 from urllib.parse import urlsplit
 
 import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from langgraph.graph import END, START, StateGraph
+from pydantic import BaseModel, Field
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -94,11 +96,21 @@ STREAMING_ASR_MODEL_PATH = _local_path(
     "STREAMING_ASR_MODEL_PATH",
     "models/speech-analytics/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17",
 )
+TTS_MODEL_ID = "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
+TTS_MODEL_PATH = _local_path(
+    "TTS_MODEL_PATH",
+    "models/speech-analytics/qwen3-tts-0.6b-customvoice",
+)
 LLM_ENDPOINT = _validate_local_llm_endpoint(
     os.getenv("LLM_ENDPOINT", "http://127.0.0.1:8080/v1/chat/completions")
 )
 LLM_MODEL = os.getenv("LLM_MODEL", "muse-glimmer")
 LLM_TIMEOUT_SECONDS = float(os.getenv("LLM_TIMEOUT_SECONDS", "240"))
+
+
+class SpeechSynthesisRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=1000)
+    speaker: Literal["Aiden", "Ryan"] = "Aiden"
 
 
 class AnalysisState(TypedDict, total=False):
@@ -658,6 +670,8 @@ def build_analysis_graph():
 
 app = FastAPI(title="Signal Local Speech Analytics", version="1.1.0")
 MODEL_RUN_LOCK = asyncio.Lock()
+_tts_model: Any | None = None
+_tts_model_lock = threading.Lock()
 
 
 def _local_models_ready() -> bool:
@@ -679,6 +693,41 @@ def _streaming_asr_ready() -> bool:
             "tokens.txt",
         )
     )
+
+
+def _qwen_tts_ready() -> bool:
+    return (TTS_MODEL_PATH / "config.json").is_file() and any(TTS_MODEL_PATH.glob("*.safetensors"))
+
+
+def _synthesize_speech_local(text: str, speaker: str) -> bytes:
+    global _tts_model
+
+    if not _qwen_tts_ready():
+        raise FileNotFoundError(f"Qwen TTS weights are missing from {TTS_MODEL_PATH}.")
+    with _tts_model_lock:
+        if _tts_model is None:
+            import torch
+            from qwen_tts import Qwen3TTSModel
+
+            torch.set_num_threads(max(1, min(2, os.cpu_count() or 1)))
+            _tts_model = Qwen3TTSModel.from_pretrained(
+                str(TTS_MODEL_PATH),
+                device_map="cpu",
+                dtype=torch.bfloat16,
+                local_files_only=True,
+            )
+        import soundfile as sf
+
+        waveforms, sample_rate = _tts_model.generate_custom_voice(
+            text=text,
+            language="English",
+            speaker=speaker,
+        )
+        if not waveforms or sample_rate <= 0:
+            raise ValueError("Qwen TTS returned no audio.")
+        audio_file = io.BytesIO()
+        sf.write(audio_file, waveforms[0], sample_rate, format="WAV")
+        return audio_file.getvalue()
 
 
 def _create_streaming_recognizer():
@@ -740,14 +789,40 @@ async def health() -> dict[str, Any]:
         "offline": True,
         "local_models_ready": _local_models_ready(),
         "streaming_asr_ready": _streaming_asr_ready(),
+        "qwen_tts_ready": _qwen_tts_ready(),
         "local_llm_ready": llm_ready,
         "models": {
             "transcription": "Faster-Whisper small (local, CPU int8)",
             "streaming_transcription": "Sherpa-ONNX Zipformer English 20M (local, streaming)",
             "emotion": "DistilRoBERTa emotion (local, English text)",
             "translation_and_insights": LLM_MODEL,
+            "speech_synthesis": f"{TTS_MODEL_ID} (local, CPU bfloat16)",
         },
     }
+
+
+@app.post("/api/tts", response_class=Response)
+async def synthesize_speech(request: SpeechSynthesisRequest) -> Response:
+    text = request.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Provide text to synthesize.")
+    if not _qwen_tts_ready():
+        raise HTTPException(
+            status_code=503,
+            detail="The local Qwen TTS model is missing. Run .venv\\Scripts\\python.exe server\\download_models.py.",
+        )
+    try:
+        audio = await asyncio.to_thread(_synthesize_speech_local, text, request.speaker)
+    except (ImportError, OSError, RuntimeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Local Qwen TTS failed: {_service_error(exc)}",
+        ) from exc
+    return Response(
+        content=audio,
+        media_type="audio/wav",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.websocket("/ws/transcribe")

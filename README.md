@@ -23,15 +23,16 @@ items, and other LangGraph readouts remain part of uploaded-audio analysis.
 
 Optional spoken-conversation mode sends each recognized phrase to the local
 llama.cpp model with a bounded six-turn context and returns a short spoken
-reply. Qwen3-TTS 0.6B synthesizes each reply locally using the selected Aiden or
-Ryan voice; the browser only plays audio returned by the local app. Microphone
-capture pauses during playback to prevent acoustic feedback. Conversation
-history is kept in memory only for the active WebSocket session, and generated
-audio is not stored. The CPU implementation synthesizes a complete WAV before
-playback; on this machine the first short test took about 22 seconds including
-model load, and a warm 3.7-second sample took about 11 seconds to generate.
-Synthesis is slower than real time, so the microphone stays paused during
-generation and playback.
+reply. Qwen3-TTS 0.6B synthesizes each English reply locally with a selectable
+voice: Aiden, Ryan, Vivian, Serena, Uncle Fu, Dylan, Eric, Ono Anna, or Sohee.
+The browser only plays audio returned by the local app. Microphone capture
+pauses during playback to prevent acoustic feedback. Conversation history is
+kept in memory only for the active WebSocket session, and generated audio is
+not stored. The CPU implementation synthesizes a complete WAV before playback;
+on this machine the first short test took about 22 seconds including model
+load, and a warm 3.7-second sample took about 11 seconds to generate. Synthesis
+is slower than real time, so the microphone stays paused during generation and
+playback.
 
 The results include an agent activity trace showing each specialist's
 assignment, completion status, and any skipped or warning steps. The emotion

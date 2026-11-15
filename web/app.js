@@ -347,7 +347,7 @@ function setQwenTtsAvailability(available) {
   elements.conversationMode.disabled = !available || streamingActive;
   elements.ttsVoice.disabled = !available || streamingActive;
   elements.conversationHint.textContent = available
-    ? "Replies are synthesized locally with Qwen TTS; the microphone pauses during playback."
+    ? "Replies are synthesized locally in English; choose from nine Qwen voices. The microphone pauses during playback."
     : "The local Qwen TTS model is missing. Run .venv\\Scripts\\python.exe server\\download_models.py to download it.";
 }
 

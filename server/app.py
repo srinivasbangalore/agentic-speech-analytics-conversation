@@ -110,7 +110,17 @@ LLM_TIMEOUT_SECONDS = float(os.getenv("LLM_TIMEOUT_SECONDS", "240"))
 
 class SpeechSynthesisRequest(BaseModel):
     text: str = Field(min_length=1, max_length=1000)
-    speaker: Literal["Aiden", "Ryan"] = "Aiden"
+    speaker: Literal[
+        "Aiden",
+        "Ryan",
+        "Vivian",
+        "Serena",
+        "Uncle_Fu",
+        "Dylan",
+        "Eric",
+        "Ono_Anna",
+        "Sohee",
+    ] = "Aiden"
 
 
 class AnalysisState(TypedDict, total=False):

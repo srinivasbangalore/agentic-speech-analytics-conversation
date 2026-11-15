@@ -127,8 +127,23 @@
               </label>
               <label class="conversation-voice-label" for="tts-voice">Qwen TTS voice</label>
               <select id="tts-voice" class="conversation-voice" disabled>
-                <option value="Aiden">Aiden — American English</option>
-                <option value="Ryan">Ryan — English</option>
+                <optgroup label="English">
+                  <option value="Aiden" selected>Aiden — sunny American male</option>
+                  <option value="Ryan">Ryan — dynamic male</option>
+                </optgroup>
+                <optgroup label="Chinese">
+                  <option value="Vivian">Vivian — bright female</option>
+                  <option value="Serena">Serena — warm, gentle female</option>
+                  <option value="Uncle_Fu">Uncle Fu — mellow male</option>
+                  <option value="Dylan">Dylan — Beijing male</option>
+                  <option value="Eric">Eric — Chengdu male</option>
+                </optgroup>
+                <optgroup label="Japanese">
+                  <option value="Ono_Anna">Ono Anna — playful female</option>
+                </optgroup>
+                <optgroup label="Korean">
+                  <option value="Sohee">Sohee — warm female</option>
+                </optgroup>
               </select>
               <p id="conversation-hint" class="conversation-hint">Checking for the local Qwen TTS model…</p>
             </div>

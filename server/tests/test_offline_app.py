@@ -345,7 +345,11 @@ def test_conversation_reply_keeps_bounded_turn_context(monkeypatch):
     ]
 
 
-def test_qwen_tts_endpoint_returns_local_audio(client, monkeypatch):
+@pytest.mark.parametrize(
+    "speaker",
+    ["Aiden", "Ryan", "Vivian", "Serena", "Uncle_Fu", "Dylan", "Eric", "Ono_Anna", "Sohee"],
+)
+def test_qwen_tts_endpoint_returns_local_audio(client, monkeypatch, speaker):
     calls = []
 
     def fake_synthesize(text, speaker):
@@ -357,13 +361,13 @@ def test_qwen_tts_endpoint_returns_local_audio(client, monkeypatch):
 
     response = client.post(
         "/api/tts",
-        json={"text": "Hello there.", "speaker": "Ryan"},
+        json={"text": "Hello there.", "speaker": speaker},
     )
 
     assert response.status_code == 200
     assert response.headers["content-type"] == "audio/wav"
     assert response.content == b"RIFF-local-wav"
-    assert calls == [("Hello there.", "Ryan")]
+    assert calls == [("Hello there.", speaker)]
 
 
 def test_qwen_tts_endpoint_reports_missing_local_model(client, monkeypatch):

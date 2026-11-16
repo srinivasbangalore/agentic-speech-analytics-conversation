@@ -70,7 +70,10 @@ recordings. Model license terms are in the model cards.
    streaming Zipformer, Qwen3-TTS 0.6B CustomVoice, and a small Qwen GGUF used
    for local smoke tests into the ignored `models\` directory. Runtime
    inference never downloads weights. Qwen TTS runs on CPU using bfloat16 and
-   can take longer to synthesize than browser-native speech.
+   can take longer to synthesize than browser-native speech. Conversation
+   replies are split into short chunks at sentence boundaries where possible,
+   with the next chunk synthesized during playback to reduce time to first
+   audio.
 3. Start the local language model server in one terminal:
 
    ```powershell
@@ -134,6 +137,60 @@ heuristic is not a general prompt-injection detector. Treat all generated
 insights and translations as unverified; the 30B model has not been evaluated
 here, and neither model is suitable for consequential decisions without human
 review.
+
+### Qwen TTS ONNX/INT8 exploration
+
+ONNX Runtime quantization was tested on this laptop but was **not enabled** in
+the website. The active TTS path remains the original
+`Qwen3-TTS-12Hz-0.6B-CustomVoice` PyTorch CPU BF16 model. The full ONNX test
+build was slower end to end; the standalone quantized talker-core files under
+the ignored `models\speech-analytics\qwen3-tts-0.6b-talkercore-int4` and
+`...\qwen3-tts-0.6b-talkercore-int8` directories are components, not drop-in
+replacement models.
+
+The temporary exporter was
+[qwen3-tts-onnxruntime](https://github.com/zhangluoyang/qwen3-tts-onnxruntime)
+(Apache-2.0, commit `5d1687f`). ONNX Runtime CPU smoke tests passed for INT4
+and INT8 talker-core graphs. On the same short phrase, the measured
+wall-clock results were:
+
+| Runtime | Time | Generated audio |
+| --- | ---: | ---: |
+| PyTorch BF16, cold request | 23.1 s | 3.44 s |
+| PyTorch BF16, warm request | 10.9 s | 3.84 s |
+| ONNX INT8 talker core, FP32 residual sampler | 44.0 s | 3.68 s |
+| ONNX INT8 talker core and residual sampler | 110.7 s | 4.08 s |
+
+These are single local measurements, not a formal benchmark. Limiting ONNX
+Runtime to two threads or disabling I/O binding made the ONNX run slower, not
+faster. Profiling showed the residual sampler and per-token ONNX decode loops
+dominated latency. INT8 reduced the talker-core ONNX files to about 446 MiB
+(INT4: 236 MiB), but smaller weights did not translate into faster CPU
+synthesis. Synthetic-logit comparisons also showed higher error for INT4 than
+INT8; they do not establish speech quality.
+
+Export caveats for a future attempt:
+
+- The exported BF16 graph could not run on the installed CPU provider because
+  it lacked a BF16 `Mul` kernel; FP32 ONNX graphs were needed before
+  quantization.
+- The community exporter assumed the talker hidden width matched
+  `config.hidden_size`. For this 0.6B checkpoint, the attention output width
+  instead matched `o_proj.in_features`; a temporary exporter-only adjustment
+  was needed.
+- Exporting the tokenizer encoder failed in the installed PyTorch/Transformers
+  stack while tracing packed-sequence attention masks. CustomVoice did not need
+  that encoder, so the tokenizer decoder was exported separately for the
+  end-to-end experiment.
+- Export dependencies (`onnxruntime`, `onnx_ir`, and `onnxscript`) were
+  installed in the local virtual environment for the experiment only and were
+  not added to `server\requirements.txt`. The full experimental export was
+  removed; only the standalone talker-core artifacts remain locally, ignored
+  by Git.
+
+Do not switch the website to these ONNX artifacts without re-benchmarking the
+complete TTS path and checking actual audio quality. The current BF16 runtime
+is faster on this CPU.
 
 ## Muse Glimmer local chat (optional)
 

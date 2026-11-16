@@ -60,8 +60,47 @@ let assistantSpeechQueue = [];
 let assistantSpeechActive = false;
 let assistantSpeechGeneration = 0;
 let assistantSpeechController = null;
+let assistantSpeechPrefetch = null;
 let assistantAudio = null;
 let assistantAudioUrl = null;
+
+function splitSpeechIntoChunks(text, maxLength = 160) {
+  const input = text.trim();
+  if (!input) return [];
+
+  const segments = typeof Intl.Segmenter === "function"
+    ? [...new Intl.Segmenter(undefined, { granularity: "sentence" }).segment(input)]
+      .map(({ segment }) => segment.trim())
+      .filter(Boolean)
+    : (input.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [input])
+      .map((segment) => segment.trim())
+      .filter(Boolean);
+  const chunks = [];
+  let current = "";
+
+  for (const segment of segments) {
+    if (segment.length > maxLength) {
+      if (current) chunks.push(current);
+      current = "";
+      let remaining = segment;
+      while (remaining.length > maxLength) {
+        const boundary = remaining.lastIndexOf(" ", maxLength);
+        const splitAt = boundary > 0 ? boundary : maxLength;
+        chunks.push(remaining.slice(0, splitAt).trim());
+        remaining = remaining.slice(splitAt).trimStart();
+      }
+      current = remaining;
+    } else if (current && current.length + segment.length + 1 > maxLength) {
+      chunks.push(current);
+      current = segment;
+    } else {
+      current = current ? `${current} ${segment}` : segment;
+    }
+  }
+
+  if (current) chunks.push(current);
+  return chunks;
+}
 
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, (character) => ({
@@ -260,39 +299,70 @@ function setMicrophoneMuted(muted) {
   });
 }
 
+async function requestAssistantSpeech(reply, controller) {
+  const response = await fetch("/api/tts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(reply),
+    signal: controller.signal,
+  });
+  if (!response.ok) {
+    let errorMessage = `Local Qwen TTS request failed (${response.status}).`;
+    try {
+      const payload = await response.json();
+      if (typeof payload.detail === "string") errorMessage = payload.detail;
+    } catch {
+      // Keep the HTTP status message when the server does not return JSON.
+    }
+    throw new Error(errorMessage);
+  }
+  return response.blob();
+}
+
+function prefetchNextAssistantSpeech(generation) {
+  if (assistantSpeechPrefetch || !assistantSpeechQueue.length) return;
+  const reply = assistantSpeechQueue.shift();
+  const controller = new AbortController();
+  const request = requestAssistantSpeech(reply, controller).then(
+    (blob) => ({ blob }),
+    (error) => ({ error }),
+  );
+  assistantSpeechPrefetch = { reply, generation, controller, request };
+}
+
 async function speakNextAssistantReply(generation) {
   if (generation !== assistantSpeechGeneration) return;
-  const reply = assistantSpeechQueue.shift();
+  let reply;
+  let controller;
+  let speechRequest;
+  if (assistantSpeechPrefetch?.generation === generation) {
+    ({ reply, controller, request: speechRequest } = assistantSpeechPrefetch);
+    assistantSpeechPrefetch = null;
+  } else {
+    reply = assistantSpeechQueue.shift();
+  }
   if (!reply) {
     assistantSpeechActive = false;
     setMicrophoneMuted(false);
     return;
   }
+  if (!controller) {
+    controller = new AbortController();
+    speechRequest = requestAssistantSpeech(reply, controller).then(
+      (blob) => ({ blob }),
+      (error) => ({ error }),
+    );
+  }
   assistantSpeechActive = true;
-  const controller = new AbortController();
   assistantSpeechController = controller;
 
   try {
     elements.streamingStatus.textContent = "Generating speech locally with Qwen TTS…";
-    const response = await fetch("/api/tts", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(reply),
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      let errorMessage = `Local Qwen TTS request failed (${response.status}).`;
-      try {
-        const payload = await response.json();
-        if (typeof payload.detail === "string") errorMessage = payload.detail;
-      } catch {
-        // Keep the HTTP status message when the server does not return JSON.
-      }
-      throw new Error(errorMessage);
-    }
-
-    const audioBlob = await response.blob();
+    const result = await speechRequest;
+    if (result.error) throw result.error;
+    const audioBlob = result.blob;
     if (generation !== assistantSpeechGeneration) return;
+    prefetchNextAssistantSpeech(generation);
     assistantAudioUrl = URL.createObjectURL(audioBlob);
     assistantAudio = new Audio(assistantAudioUrl);
     elements.streamingStatus.textContent = "Assistant speaking; microphone paused to prevent feedback.";
@@ -317,14 +387,20 @@ async function speakNextAssistantReply(generation) {
     if (assistantAudioUrl) URL.revokeObjectURL(assistantAudioUrl);
     assistantAudioUrl = null;
     assistantSpeechActive = false;
-    if (assistantSpeechQueue.length) void speakNextAssistantReply(generation);
-    else setMicrophoneMuted(false);
+    if (assistantSpeechPrefetch || assistantSpeechQueue.length) {
+      void speakNextAssistantReply(generation);
+    } else {
+      setMicrophoneMuted(false);
+    }
   }
 }
 
 function speakAssistantReply(text) {
   if (!text || !qwenTtsReady) return;
-  assistantSpeechQueue.push({ text, speaker: elements.ttsVoice.value });
+  const chunks = splitSpeechIntoChunks(text);
+  assistantSpeechQueue.push(
+    ...chunks.map((chunk) => ({ text: chunk, speaker: elements.ttsVoice.value })),
+  );
   setMicrophoneMuted(true);
   if (!assistantSpeechActive) void speakNextAssistantReply(assistantSpeechGeneration);
 }
@@ -333,6 +409,8 @@ function resetAssistantSpeech() {
   assistantSpeechGeneration += 1;
   assistantSpeechController?.abort();
   assistantSpeechController = null;
+  assistantSpeechPrefetch?.controller.abort();
+  assistantSpeechPrefetch = null;
   assistantAudio?.pause();
   assistantAudio = null;
   if (assistantAudioUrl) URL.revokeObjectURL(assistantAudioUrl);
